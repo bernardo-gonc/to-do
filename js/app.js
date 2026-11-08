@@ -6,7 +6,7 @@ const store = new Store();
 const $ = (id) => document.getElementById(id);
 
 const UI_KEY = 'todo-app:ui';
-const view = { filter: 'all', boardId: null, tag: null, search: '', sort: 'created', mode: 'list' };
+const view = { filter: 'all', boardId: null, tag: null, search: '', sort: 'manual', mode: 'list' };
 const collapsed = new Set();
 let editingId = null;
 let dragId = null;
@@ -190,19 +190,35 @@ function renderListView(tasks) {
 }
 
 // ---------- Board view ----------
-function card(t) {
+function moveCardByKey(t, items, index, key) {
+  if (key === 'ArrowUp' && index === 0) return;
+  if (key === 'ArrowDown' && index === items.length - 1) return;
+  const beforeId = key === 'ArrowUp' ? items[index - 1].id : (items[index + 2]?.id ?? null);
+  guard(() => { store.moveTask(t.id, t.columnId, beforeId); render(); });
+  $('board-view').querySelector(`.card[data-id="${t.id}"]`)?.focus();
+}
+
+function card(t, items, index) {
   const overdue = isOverdue(t, todayISO());
   const c = el('div', { class: `card${t.done ? ' done' : ''}`, draggable: 'true', tabindex: '0', role: 'button',
+    'data-id': t.id,
     'aria-label': `Edit "${t.title}"`,
+    'aria-keyshortcuts': 'Alt+ArrowUp Alt+ArrowDown',
     onclick: () => openDialog(t),
-    onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); openDialog(t); } },
+    onkeydown: (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); openDialog(t); }
+      else if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown') && view.sort === 'manual') {
+        e.preventDefault();
+        moveCardByKey(t, items, index, e.key);
+      }
+    },
     ondragstart: (e) => {
       dragId = t.id;
       e.dataTransfer.effectAllowed = 'move';
       e.dataTransfer.setData('text/plain', t.id);
       requestAnimationFrame(() => c.classList.add('dragging'));
     },
-    ondragend: () => { dragId = null; c.classList.remove('dragging'); } },
+    ondragend: () => { dragId = null; c.classList.remove('dragging'); clearDropIndicators(); } },
   el('div', { class: 'card-title', text: t.title }),
   el('div', { class: 'card-meta' },
     pill(t.priority, PRIORITY_LABEL[t.priority]),
@@ -229,6 +245,22 @@ function columnHeader(board, column, count) {
       })));
 }
 
+// The card the dragged card would be dropped in front of (null = end of the column).
+function dropTarget(cardsEl, y) {
+  return [...cardsEl.querySelectorAll('.card:not(.dragging)')]
+    .find((c) => { const r = c.getBoundingClientRect(); return y < r.top + r.height / 2; }) ?? null;
+}
+
+function clearDropIndicators() {
+  for (const n of $('board-view').querySelectorAll('.drop-before, .drop-end')) n.classList.remove('drop-before', 'drop-end');
+}
+
+function showDropIndicator(cardsEl, target) {
+  clearDropIndicators();
+  if (view.sort !== 'manual') return;
+  (target ?? cardsEl).classList.add(target ? 'drop-before' : 'drop-end');
+}
+
 function renderBoard(tasks) {
   const root = $('board-view');
   root.replaceChildren();
@@ -236,18 +268,27 @@ function renderBoard(tasks) {
   if (!board) return;
   for (const column of board.columns) {
     const items = tasks.filter((t) => t.columnId === column.id);
+    const cardsEl = el('div', { class: 'cards' }, ...items.map((t, i) => card(t, items, i)));
     const col = el('div', { class: 'column', 'data-column': column.name,
-      ondragover: (e) => { if (!dragId) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move'; col.classList.add('over'); },
-      ondragleave: (e) => { if (!col.contains(e.relatedTarget)) col.classList.remove('over'); },
+      ondragover: (e) => {
+        if (!dragId) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        col.classList.add('over');
+        showDropIndicator(cardsEl, dropTarget(cardsEl, e.clientY));
+      },
+      ondragleave: (e) => { if (!col.contains(e.relatedTarget)) { col.classList.remove('over'); clearDropIndicators(); } },
       ondrop: (e) => {
         e.preventDefault();
         col.classList.remove('over');
         const id = dragId ?? e.dataTransfer.getData('text/plain');
+        const beforeId = view.sort === 'manual' ? (dropTarget(cardsEl, e.clientY)?.dataset.id ?? null) : null;
         dragId = null;
-        if (id) guard(() => { store.moveTask(id, column.id); render(); });
+        clearDropIndicators();
+        if (id) guard(() => { store.moveTask(id, column.id, beforeId); render(); });
       } },
     columnHeader(board, column, items.length),
-    el('div', { class: 'cards' }, ...items.map(card)),
+    cardsEl,
     el('button', { type: 'button', class: 'add-card', text: '+ Add a card', onclick: () => openDialog(null, { columnId: column.id }) }));
     root.append(col);
   }

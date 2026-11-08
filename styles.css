@@ -113,6 +113,8 @@ main { flex: 1; overflow: auto; padding: 20px 24px 40px; }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px; cursor: grab; text-align: left; width: 100%; }
 .card:hover { border-color: var(--accent); }
 .card.dragging { opacity: .4; }
+.card.drop-before { box-shadow: 0 -4px 0 -1px var(--accent); }
+.cards.drop-end::after { content: ''; height: 3px; border-radius: 2px; background: var(--accent); }
 .card.done .card-title { text-decoration: line-through; color: var(--muted); }
 .card-title { font-weight: 600; overflow-wrap: anywhere; }
 .card-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; font-size: .78rem; color: var(--muted); }
