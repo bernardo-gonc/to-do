@@ -3,13 +3,12 @@
 A local, dependency-free to-do app. Everything runs in the browser and is saved in `localStorage`; there is no server and no account.
 
 ## Features
-- Add, edit, complete and delete tasks, with notes
-- Due dates (with today/overdue highlighting) and low/medium/high priority
+- Dark, sidebar-based layout with a **List** view (grouped To do / Doing / Done, coloured priority and status pills) and a **Board** view (drag cards between columns)
+- Create/edit tasks in a dialog: title, status, priority, due date (overdue highlighted), list, tags, notes
 - Lists (Inbox plus your own) and free-form tags
 - Filters: All, Active, Completed, Due today, Overdue
 - Search across title, notes and tags; sort by newest, due date or priority
 - Export/import JSON backups; clear completed
-- Light/dark theme follows your system
 
 ## Run
 No install or server needed: double-click `index.html` (or drag it into a browser) and bookmark it.

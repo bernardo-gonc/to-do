@@ -6,6 +6,7 @@ const STORAGE_KEY = 'todo-app:v1';
 const SCHEMA_VERSION = 1;
 const INBOX_ID = 'inbox';
 const PRIORITIES = ['low', 'medium', 'high'];
+const STATUSES = ['todo', 'doing', 'done'];
 
 const PRIORITY_RANK = { high: 0, medium: 1, low: 2 };
 
@@ -58,17 +59,19 @@ function sanitizeState(raw) {
     if (!t || typeof t.title !== 'string' || !t.title.trim()) continue;
     const id = typeof t.id === 'string' && !taskIds.has(t.id) ? t.id : newId();
     taskIds.add(id);
+    const status = STATUSES.includes(t.status) ? t.status : (t.done ? 'done' : 'todo');
     tasks.push({
       id,
       title: t.title.trim(),
       notes: typeof t.notes === 'string' ? t.notes : '',
-      done: Boolean(t.done),
+      status,
+      done: status === 'done',
       priority: PRIORITIES.includes(t.priority) ? t.priority : 'medium',
       dueDate: /^\d{4}-\d{2}-\d{2}$/.test(t.dueDate ?? '') ? t.dueDate : null,
       listId: listIds.has(t.listId) ? t.listId : INBOX_ID,
       tags: normalizeTags(t.tags),
       createdAt: Number.isFinite(t.createdAt) ? t.createdAt : Date.now(),
-      completedAt: t.done && Number.isFinite(t.completedAt) ? t.completedAt : null,
+      completedAt: status === 'done' ? (Number.isFinite(t.completedAt) ? t.completedAt : Date.now()) : null,
     });
   }
   return { version: SCHEMA_VERSION, lists, tasks };
@@ -103,20 +106,21 @@ class Store {
   get tasks() { return this.state.tasks; }
 
   // ---- Tasks ----
-  addTask({ title, notes = '', priority = 'medium', dueDate = null, listId = INBOX_ID, tags = [] }) {
+  addTask({ title, notes = '', priority = 'medium', dueDate = null, listId = INBOX_ID, tags = [], status = 'todo' }) {
     const clean = String(title ?? '').trim();
     if (!clean) throw new Error('Title is required.');
     const task = {
       id: newId(),
       title: clean,
       notes: String(notes),
-      done: false,
+      status: STATUSES.includes(status) ? status : 'todo',
+      done: status === 'done',
       priority: PRIORITIES.includes(priority) ? priority : 'medium',
       dueDate: dueDate || null,
       listId: this.state.lists.some((l) => l.id === listId) ? listId : INBOX_ID,
       tags: normalizeTags(tags),
       createdAt: Date.now(),
-      completedAt: null,
+      completedAt: status === 'done' ? Date.now() : null,
     };
     this.state.tasks.push(task);
     this.#save();
@@ -136,6 +140,7 @@ class Store {
     if ('dueDate' in changes) task.dueDate = changes.dueDate || null;
     if ('listId' in changes && this.state.lists.some((l) => l.id === changes.listId)) task.listId = changes.listId;
     if ('tags' in changes) task.tags = normalizeTags(changes.tags);
+    if ('status' in changes) this.#applyStatus(task, changes.status);
     this.#save();
     return task;
   }
@@ -143,10 +148,27 @@ class Store {
   toggleTask(id) {
     const task = this.state.tasks.find((t) => t.id === id);
     if (!task) throw new Error('Task not found.');
-    task.done = !task.done;
-    task.completedAt = task.done ? Date.now() : null;
+    this.#applyStatus(task, task.done ? 'todo' : 'done');
     this.#save();
     return task;
+  }
+
+  setStatus(id, status) {
+    const task = this.state.tasks.find((t) => t.id === id);
+    if (!task) throw new Error('Task not found.');
+    if (!STATUSES.includes(status)) throw new Error('Unknown status.');
+    this.#applyStatus(task, status);
+    this.#save();
+    return task;
+  }
+
+  // Keeps `status`, `done` and `completedAt` consistent.
+  #applyStatus(task, status) {
+    if (!STATUSES.includes(status)) return;
+    task.status = status;
+    task.done = status === 'done';
+    if (!task.done) task.completedAt = null;
+    else if (!task.completedAt) task.completedAt = Date.now();
   }
 
   deleteTask(id) {
@@ -256,5 +278,5 @@ function queryTasks(tasks, { listId = null, status = 'all', tag = null, search =
   return result.sort((a, b) => Number(a.done) - Number(b.done) || cmp(a, b));
 }
 
-globalThis.TodoStore = { STORAGE_KEY, SCHEMA_VERSION, INBOX_ID, PRIORITIES, todayISO, normalizeTags, sanitizeState, Store, isOverdue, queryTasks };
+globalThis.TodoStore = { STORAGE_KEY, SCHEMA_VERSION, INBOX_ID, PRIORITIES, STATUSES, todayISO, normalizeTags, sanitizeState, Store, isOverdue, queryTasks };
 })();

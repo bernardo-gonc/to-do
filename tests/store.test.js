@@ -5,7 +5,7 @@ import vm from 'node:vm';
 
 // store.js is a classic script (so the app opens from file://); load it and read its global.
 vm.runInThisContext(fs.readFileSync(new URL('../js/store.js', import.meta.url), 'utf8'));
-const { Store, INBOX_ID, STORAGE_KEY, queryTasks, isOverdue, normalizeTags, sanitizeState } = globalThis.TodoStore;
+const { Store, INBOX_ID, STORAGE_KEY, STATUSES, queryTasks, isOverdue, normalizeTags, sanitizeState } = globalThis.TodoStore;
 
 function memoryStorage(initial = {}) {
   const data = { ...initial };
@@ -166,4 +166,36 @@ test('sanitizeState repairs unknown lists, priorities and bad dates', () => {
 test('normalizeTags', () => {
   assert.deepEqual(normalizeTags(' A , #b,,a '), ['a', 'b']);
   assert.deepEqual(normalizeTags(undefined), []);
+});
+
+test('status stays consistent with done/completedAt', () => {
+  const s = new Store(memoryStorage());
+  const t = s.addTask({ title: 'x' });
+  assert.equal(t.status, 'todo');
+  s.setStatus(t.id, 'doing');
+  assert.equal(s.tasks[0].status, 'doing');
+  assert.equal(s.tasks[0].done, false);
+  s.setStatus(t.id, 'done');
+  assert.equal(s.tasks[0].done, true);
+  assert.ok(s.tasks[0].completedAt);
+  s.toggleTask(t.id);
+  assert.equal(s.tasks[0].status, 'todo');
+  assert.equal(s.tasks[0].completedAt, null);
+  s.toggleTask(t.id);
+  assert.equal(s.tasks[0].status, 'done');
+  s.updateTask(t.id, { status: 'doing' });
+  assert.equal(s.tasks[0].done, false);
+  assert.throws(() => s.setStatus(t.id, 'nope'));
+  assert.deepEqual(STATUSES, ['todo', 'doing', 'done']);
+});
+
+test('can create a task directly in a status', () => {
+  const s = new Store(memoryStorage());
+  assert.equal(s.addTask({ title: 'a', status: 'done' }).done, true);
+  assert.equal(s.addTask({ title: 'b', status: 'bogus' }).status, 'todo');
+});
+
+test('old data without status is migrated from done', () => {
+  const st = sanitizeState({ lists: [], tasks: [{ title: 'a', done: true }, { title: 'b', done: false }] });
+  assert.deepEqual(st.tasks.map((t) => t.status), ['done', 'todo']);
 });
