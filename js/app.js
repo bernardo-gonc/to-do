@@ -1,4 +1,6 @@
-import { Store, INBOX_ID, queryTasks, isOverdue, todayISO } from './store.js';
+(function () {
+'use strict';
+const { Store, INBOX_ID, queryTasks, isOverdue, todayISO } = globalThis.TodoStore;
 
 const store = new Store();
 const $ = (id) => document.getElementById(id);
@@ -224,3 +226,4 @@ $('import-file').addEventListener('change', async (e) => {
 });
 
 render();
+})();

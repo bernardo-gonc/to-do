@@ -1,12 +1,15 @@
 // Data layer for the to-do app. No DOM access, so it can be unit-tested in Node.
-export const STORAGE_KEY = 'todo-app:v1';
-export const SCHEMA_VERSION = 1;
-export const INBOX_ID = 'inbox';
-export const PRIORITIES = ['low', 'medium', 'high'];
+// Loaded as a classic script (works from file://) and exposed as window.TodoStore.
+(function () {
+'use strict';
+const STORAGE_KEY = 'todo-app:v1';
+const SCHEMA_VERSION = 1;
+const INBOX_ID = 'inbox';
+const PRIORITIES = ['low', 'medium', 'high'];
 
 const PRIORITY_RANK = { high: 0, medium: 1, low: 2 };
 
-export function todayISO(now = new Date()) {
+function todayISO(now = new Date()) {
   const y = now.getFullYear();
   const m = String(now.getMonth() + 1).padStart(2, '0');
   const d = String(now.getDate()).padStart(2, '0');
@@ -18,7 +21,7 @@ function newId() {
   return `id-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-export function normalizeTags(tags) {
+function normalizeTags(tags) {
   const list = Array.isArray(tags) ? tags : String(tags ?? '').split(',');
   const seen = new Set();
   const out = [];
@@ -37,7 +40,7 @@ function emptyState() {
 }
 
 // Validates arbitrary parsed JSON and returns a clean state, or throws.
-export function sanitizeState(raw) {
+function sanitizeState(raw) {
   if (!raw || typeof raw !== 'object' || !Array.isArray(raw.tasks) || !Array.isArray(raw.lists)) {
     throw new Error('Invalid data: expected an object with "lists" and "tasks" arrays.');
   }
@@ -71,7 +74,7 @@ export function sanitizeState(raw) {
   return { version: SCHEMA_VERSION, lists, tasks };
 }
 
-export class Store {
+class Store {
   constructor(storage = globalThis.localStorage) {
     this.storage = storage;
     this.state = this.#load();
@@ -217,11 +220,11 @@ export class Store {
 }
 
 // ---- Pure query helpers ----
-export function isOverdue(task, today = todayISO()) {
+function isOverdue(task, today = todayISO()) {
   return !task.done && task.dueDate !== null && task.dueDate < today;
 }
 
-export function queryTasks(tasks, { listId = null, status = 'all', tag = null, search = '', sort = 'created' } = {}, today = todayISO()) {
+function queryTasks(tasks, { listId = null, status = 'all', tag = null, search = '', sort = 'created' } = {}, today = todayISO()) {
   const q = search.trim().toLowerCase();
   const result = tasks.filter((t) => {
     if (listId && t.listId !== listId) return false;
@@ -252,3 +255,6 @@ export function queryTasks(tasks, { listId = null, status = 'all', tag = null, s
   // Completed tasks always sink below active ones.
   return result.sort((a, b) => Number(a.done) - Number(b.done) || cmp(a, b));
 }
+
+globalThis.TodoStore = { STORAGE_KEY, SCHEMA_VERSION, INBOX_ID, PRIORITIES, todayISO, normalizeTags, sanitizeState, Store, isOverdue, queryTasks };
+})();
