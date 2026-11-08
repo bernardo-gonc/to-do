@@ -332,3 +332,43 @@ test('normalizeTags', () => {
   assert.deepEqual(normalizeTags(' A , #b,,a '), ['a', 'b']);
   assert.deepEqual(normalizeTags(undefined), []);
 });
+
+test('moveTask orders cards: before a card, to the end, and across columns', () => {
+  const s = new Store(memoryStorage());
+  const b = s.boards[0];
+  const todo = col(b, 'To do').id;
+  const doing = col(b, 'Doing').id;
+  const a = s.addTask({ title: 'A' });
+  const bb = s.addTask({ title: 'B' });
+  const c = s.addTask({ title: 'C' });
+  const order = (columnId) => queryTasks(s.tasks, { sort: 'manual' }).filter((t) => t.columnId === columnId).map((t) => t.title);
+  assert.deepEqual(order(todo), ['A', 'B', 'C']); // new cards go to the bottom
+  s.moveTask(c.id, todo, a.id);
+  assert.deepEqual(order(todo), ['C', 'A', 'B']);
+  s.moveTask(c.id, todo); // to the end
+  assert.deepEqual(order(todo), ['A', 'B', 'C']);
+  s.moveTask(a.id, todo, c.id); // in the middle
+  assert.deepEqual(order(todo), ['B', 'A', 'C']);
+  s.moveTask(c.id, doing);
+  s.moveTask(bb.id, doing, c.id);
+  assert.deepEqual(order(doing), ['B', 'C']);
+  assert.deepEqual(order(todo), ['A']);
+  // a "before" card from another column is ignored: the card goes to the end
+  s.moveTask(a.id, doing, 'nope');
+  assert.deepEqual(order(doing), ['B', 'C', 'A']);
+  s.moveTask(a.id, doing, a.id); // before itself: stays last
+  assert.deepEqual(order(doing), ['B', 'C', 'A']);
+});
+
+test('manual order persists and done cards do not sink in manual sort', () => {
+  const storage = memoryStorage();
+  const s = new Store(storage);
+  const x = s.addTask({ title: 'X' });
+  s.addTask({ title: 'Y' });
+  const z = s.addTask({ title: 'Z' });
+  s.toggleTask(x.id); // X is done, but stays first in the stored order
+  s.moveTask(z.id, s.boards[0].columns[0].id, s.tasks.find((t) => t.title === 'Y').id);
+  const titles = (sort) => queryTasks(new Store(storage).tasks, { sort }).map((t) => t.title);
+  assert.deepEqual(titles('manual'), ['X', 'Z', 'Y']);
+  assert.equal(titles('created').at(-1), 'X'); // other sorts still sink done cards
+});

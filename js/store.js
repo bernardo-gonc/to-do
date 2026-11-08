@@ -234,12 +234,21 @@ class Store {
     return task;
   }
 
-  // Moves a card to any column (of any board).
-  moveTask(id, columnId) {
+  // Moves a card to any column (of any board). The card goes just before `beforeId`
+  // (a card in that column), or to the end of the column. The order of `tasks` is the manual order.
+  moveTask(id, columnId, beforeId = null) {
     const task = this.#task(id);
     const board = this.state.boards.find((b) => b.columns.some((c) => c.id === columnId));
     if (!board) throw new Error('Column not found.');
     this.#place(task, board, this.#column(board, columnId));
+    const rest = this.state.tasks.filter((t) => t.id !== id);
+    let index = beforeId && beforeId !== id ? rest.findIndex((t) => t.id === beforeId && t.columnId === columnId) : -1;
+    if (index < 0) {
+      const last = rest.reduce((acc, t, i) => (t.columnId === columnId ? i : acc), -1);
+      index = last >= 0 ? last + 1 : rest.length;
+    }
+    rest.splice(index, 0, task);
+    this.state.tasks = rest;
     this.#save();
     return task;
   }
@@ -399,6 +408,8 @@ function queryTasks(tasks, { boardId = null, status = 'all', tag = null, search 
     }
     return true;
   });
+
+  if (sort === 'manual') return result; // keep the stored (manual) order
 
   const byCreated = (a, b) => b.createdAt - a.createdAt;
   const cmp = {
