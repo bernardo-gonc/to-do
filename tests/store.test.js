@@ -372,3 +372,72 @@ test('manual order persists and done cards do not sink in manual sort', () => {
   assert.deepEqual(titles('manual'), ['X', 'Z', 'Y']);
   assert.equal(titles('created').at(-1), 'X'); // other sorts still sink done cards
 });
+
+test('meetings: created with a date, own default columns, notes fields', () => {
+  const s = new Store(memoryStorage());
+  const m = s.addBoard('Weekly sync', { kind: 'meeting', date: '2026-11-10' });
+  assert.equal(m.kind, 'meeting');
+  assert.deepEqual(m.meeting, { date: '2026-11-10', attendees: '', notes: '' });
+  assert.deepEqual(m.columns.map((c) => [c.name, c.done]), [['Action items', false], ['In progress', false], ['Done', true]]);
+  assert.equal(s.boards[0].kind, 'board');
+  assert.equal(s.addBoard('Plain').kind, 'board');
+  assert.equal(s.addBoard('Plain 2').meeting, undefined);
+  assert.equal(s.addBoard('Bad date', { kind: 'meeting', date: 'tomorrow' }).meeting.date, null);
+  assert.throws(() => s.addBoard('  ', { kind: 'meeting' }), /Meeting name/);
+});
+
+test('meetings: names may repeat; they do not clash with boards', () => {
+  const s = new Store(memoryStorage());
+  s.addBoard('Weekly sync', { kind: 'meeting', date: '2026-11-03' });
+  const b = s.addBoard('Weekly sync', { kind: 'meeting', date: '2026-11-10' });
+  s.addBoard('Weekly sync'); // a board with the same name as meetings is fine
+  assert.throws(() => s.addBoard('weekly sync')); // but not two boards
+  s.renameBoard(b.id, 'Weekly sync'); // meeting rename never clashes
+  assert.equal(s.boards.filter((x) => x.name === 'Weekly sync').length, 3);
+});
+
+test('meetings: updateMeeting saves date, attendees and notes; rejects regular boards', () => {
+  const storage = memoryStorage();
+  const s = new Store(storage);
+  const m = s.addBoard('Kickoff', { kind: 'meeting' });
+  s.updateMeeting(m.id, { date: '2026-12-01', attendees: 'Ana, Rui', notes: 'Line 1\nLine 2' });
+  s.updateMeeting(m.id, { notes: 'Only notes changed' });
+  const again = new Store(storage).boards.find((b) => b.id === m.id);
+  assert.deepEqual(again.meeting, { date: '2026-12-01', attendees: 'Ana, Rui', notes: 'Only notes changed' });
+  s.updateMeeting(m.id, { date: '' });
+  assert.equal(s.boards.find((b) => b.id === m.id).meeting.date, null);
+  assert.throws(() => s.updateMeeting(INBOX_ID, { notes: 'x' }), /not a meeting/);
+  assert.throws(() => s.updateMeeting('nope', { notes: 'x' }));
+});
+
+test('meetings: action items are cards; deleting a meeting moves them to the Inbox', () => {
+  const s = new Store(memoryStorage());
+  const m = s.addBoard('Review', { kind: 'meeting' });
+  const t = s.addTask({ title: 'Send minutes', boardId: m.id });
+  assert.equal(t.columnId, m.columns[0].id);
+  s.toggleTask(t.id);
+  assert.equal(s.tasks[0].columnId, col(m, 'Done').id);
+  s.deleteBoard(m.id);
+  assert.equal(s.boards.some((b) => b.id === m.id), false);
+  assert.equal(s.tasks[0].boardId, INBOX_ID);
+  assert.equal(s.tasks[0].done, true);
+});
+
+test('meetings survive export/import and sanitizing; old boards default to kind board', () => {
+  const a = new Store(memoryStorage());
+  const m = a.addBoard('Board mtg', { kind: 'meeting', date: '2026-11-10' });
+  a.updateMeeting(m.id, { attendees: 'Ana', notes: 'Decisions' });
+  const b = new Store(memoryStorage());
+  b.importJSON(a.exportJSON());
+  const got = b.boards.find((x) => x.name === 'Board mtg');
+  assert.equal(got.kind, 'meeting');
+  assert.deepEqual(got.meeting, { date: '2026-11-10', attendees: 'Ana', notes: 'Decisions' });
+  const st = sanitizeState({
+    boards: [{ id: 'old', name: 'Old board', columns: [{ id: 'c', name: 'One' }] }, { id: 'm', name: 'M', kind: 'meeting', meeting: { date: 5, notes: 7 } }],
+    tasks: [],
+  });
+  assert.equal(st.boards.find((x) => x.id === 'old').kind, 'board');
+  const mt = st.boards.find((x) => x.id === 'm');
+  assert.deepEqual(mt.meeting, { date: null, attendees: '', notes: '' });
+  assert.deepEqual(mt.columns.map((c) => c.name), ['Action items', 'In progress', 'Done']);
+});

@@ -39,8 +39,24 @@ function defaultColumns() {
   return [['To do', false], ['Doing', false], ['Done', true]].map(([name, done]) => ({ id: newId(), name, done }));
 }
 
+// Meetings are boards too: their cards are the action items.
+function meetingColumns() {
+  return [['Action items', false], ['In progress', false], ['Done', true]].map(([name, done]) => ({ id: newId(), name, done }));
+}
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const isoOrNull = (d) => (typeof d === 'string' && ISO_DATE.test(d) ? d : null);
+
+function cleanMeeting(m) {
+  return {
+    date: isoOrNull(m?.date),
+    attendees: typeof m?.attendees === 'string' ? m.attendees : '',
+    notes: typeof m?.notes === 'string' ? m.notes : '',
+  };
+}
+
 function emptyState() {
-  return { version: SCHEMA_VERSION, boards: [{ id: INBOX_ID, name: 'Inbox', columns: defaultColumns() }], tasks: [] };
+  return { version: SCHEMA_VERSION, boards: [{ id: INBOX_ID, name: 'Inbox', kind: 'board', columns: defaultColumns() }], tasks: [] };
 }
 
 function cleanColumns(cols) {
@@ -63,7 +79,7 @@ function sanitizeState(raw) {
   if (!raw || typeof raw !== 'object' || !Array.isArray(raw.tasks) || !(isV1 || Array.isArray(raw.boards))) {
     throw new Error('Invalid data: expected an object with "boards" and "tasks" arrays.');
   }
-  const boards = [{ id: INBOX_ID, name: 'Inbox', columns: defaultColumns() }];
+  const boards = [{ id: INBOX_ID, name: 'Inbox', kind: 'board', columns: defaultColumns() }];
   const ids = new Set([INBOX_ID]);
   for (const b of isV1 ? raw.lists : raw.boards) {
     if (!b || typeof b.id !== 'string' || typeof b.name !== 'string') continue;
@@ -74,7 +90,11 @@ function sanitizeState(raw) {
     }
     if (ids.has(b.id) || !b.name.trim()) continue;
     ids.add(b.id);
-    boards.push({ id: b.id, name: b.name.trim(), columns: columns ?? defaultColumns() });
+    if (!isV1 && b.kind === 'meeting') {
+      boards.push({ id: b.id, name: b.name.trim(), kind: 'meeting', meeting: cleanMeeting(b.meeting), columns: columns ?? meetingColumns() });
+    } else {
+      boards.push({ id: b.id, name: b.name.trim(), kind: 'board', columns: columns ?? defaultColumns() });
+    }
   }
   const byId = new Map(boards.map((b) => [b.id, b]));
 
@@ -266,13 +286,17 @@ class Store {
   }
 
   // ---- Boards ----
-  addBoard(name) {
+  // Meetings may share names (a weekly sync has many dates); regular boards may not.
+  addBoard(name, { kind = 'board', date = null } = {}) {
+    const meeting = kind === 'meeting';
     const clean = String(name ?? '').trim();
-    if (!clean) throw new Error('Board name is required.');
-    if (this.state.boards.some((b) => b.name.toLowerCase() === clean.toLowerCase())) {
+    if (!clean) throw new Error(meeting ? 'Meeting name is required.' : 'Board name is required.');
+    if (!meeting && this.state.boards.some((b) => b.kind !== 'meeting' && b.name.toLowerCase() === clean.toLowerCase())) {
       throw new Error('A board with that name already exists.');
     }
-    const board = { id: newId(), name: clean, columns: defaultColumns() };
+    const board = meeting
+      ? { id: newId(), name: clean, kind: 'meeting', meeting: { date: isoOrNull(date), attendees: '', notes: '' }, columns: meetingColumns() }
+      : { id: newId(), name: clean, kind: 'board', columns: defaultColumns() };
     this.state.boards.push(board);
     this.#save();
     return board;
@@ -283,12 +307,24 @@ class Store {
     if (id === INBOX_ID) throw new Error('The Inbox cannot be renamed.');
     const clean = String(name ?? '').trim();
     if (!clean) throw new Error('Board name is required.');
-    if (this.state.boards.some((b) => b.id !== id && b.name.toLowerCase() === clean.toLowerCase())) {
+    if (board.kind !== 'meeting' && this.state.boards.some((b) => b.id !== id && b.kind !== 'meeting' && b.name.toLowerCase() === clean.toLowerCase())) {
       throw new Error('A board with that name already exists.');
     }
     board.name = clean;
     this.#save();
     return board;
+  }
+
+  // Date, attendees and notes of a meeting board.
+  updateMeeting(boardId, changes) {
+    const board = this.#board(boardId);
+    if (board.kind !== 'meeting') throw new Error('That board is not a meeting.');
+    const m = board.meeting;
+    if ('date' in changes) m.date = isoOrNull(changes.date);
+    if ('attendees' in changes) m.attendees = String(changes.attendees);
+    if ('notes' in changes) m.notes = String(changes.notes);
+    this.#save();
+    return m;
   }
 
   // Cards of the deleted board move to the Inbox (keeping their done state).
