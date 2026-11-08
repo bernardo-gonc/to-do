@@ -6,6 +6,7 @@ A local, dependency-free to-do app. Everything runs in the browser and is saved 
 - **Boards** (Trello-style): create as many as you like. Each board has its own **columns** (start with To do / Doing / Done) that you can add, rename and delete
 - **Board view**: drag cards between columns and to any position within a column (Sort: Manual; or focus a card and press Alt+↑ / Alt+↓); "+ Add a card" in any column; `✓` on a column makes its cards count as done
 - **List view**: table grouped by column (or by board when "All boards" is selected), with coloured priority pills and a column dropdown per card
+- **Meetings**: a separate sidebar section. Each meeting has a date, attendees and a free-form **Notes** page (saved as you type), plus **action items** that are cards on the meeting's own board (Action items / In progress / Done) with the same List/Board views, drag-and-drop and ordering
 - Create/edit cards in a dialog: title, board, column, priority, due date (overdue highlighted), tags, notes
 - Filters: All, Active, Completed, Due today, Overdue; tag filter; search; sort by newest, due date or priority
 - Export/import JSON backups; clear completed

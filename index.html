@@ -24,6 +24,17 @@
           </form>
         </section>
         <section>
+          <h2>Meetings</h2>
+          <ul id="meeting-nav" class="nav-list"></ul>
+          <form id="meeting-form" class="inline-form wrap">
+            <label class="sr-only" for="new-meeting-name">New meeting name</label>
+            <input id="new-meeting-name" placeholder="New meeting" maxlength="60" autocomplete="off">
+            <label class="sr-only" for="new-meeting-date">Meeting date</label>
+            <input id="new-meeting-date" type="date">
+            <button type="submit" class="btn">Add</button>
+          </form>
+        </section>
+        <section>
           <h2>Show</h2>
           <ul id="status-filters" class="nav-list"></ul>
         </section>
@@ -54,12 +65,13 @@
         <div class="page-head">
           <h1 id="page-title">All boards</h1>
           <div class="tabs" role="tablist" aria-label="View">
+            <button type="button" role="tab" id="tab-notes" aria-selected="false" aria-controls="notes-view" hidden>Notes</button>
             <button type="button" role="tab" id="tab-list" aria-selected="true" aria-controls="list-view">List</button>
             <button type="button" role="tab" id="tab-board" aria-selected="false" aria-controls="board-view">Board</button>
           </div>
         </div>
 
-        <div class="toolbar">
+        <div class="toolbar" id="toolbar">
           <span id="count" aria-live="polite"></span>
           <label>Sort
             <select id="sort">
@@ -76,6 +88,7 @@
 
         <section id="list-view" role="tabpanel" aria-labelledby="tab-list"></section>
         <section id="board-view" class="board" role="tabpanel" aria-labelledby="tab-board" hidden></section>
+        <section id="notes-view" class="notes" role="tabpanel" aria-labelledby="tab-notes" hidden></section>
         <p id="empty" class="empty" hidden>No cards match. Use <strong>Create card</strong> to add one.</p>
       </main>
     </div>

@@ -6,18 +6,20 @@ const store = new Store();
 const $ = (id) => document.getElementById(id);
 
 const UI_KEY = 'todo-app:ui';
-const view = { filter: 'all', boardId: null, tag: null, search: '', sort: 'manual', mode: 'list' };
+const view = { filter: 'all', boardId: null, tag: null, search: '', sort: 'manual', mode: 'list', lastMode: 'list' };
 const collapsed = new Set();
 let editingId = null;
 let dragId = null;
 
 try {
   const saved = JSON.parse(localStorage.getItem(UI_KEY) || '{}');
-  if (saved.mode === 'board' || saved.mode === 'list') view.mode = saved.mode;
+  if (['board', 'list', 'notes'].includes(saved.mode)) view.mode = saved.mode;
   if (typeof saved.boardId === 'string') view.boardId = saved.boardId;
 } catch { /* ignore */ }
 if (view.boardId && !store.boards.some((b) => b.id === view.boardId)) view.boardId = null;
 if (view.mode === 'board' && !view.boardId) view.boardId = INBOX_ID;
+if (view.mode === 'notes' && store.boards.find((b) => b.id === view.boardId)?.kind !== 'meeting') view.mode = 'list';
+view.lastMode = view.mode === 'board' ? 'board' : 'list';
 
 const FILTERS = [
   ['all', 'All'], ['active', 'Active'], ['completed', 'Completed'], ['today', 'Due today'], ['overdue', 'Overdue'],
@@ -75,11 +77,78 @@ function renderFilters() {
   }
 }
 
+// ----- Meeting notes are saved shortly after typing stops, and always before the view changes -----
+let meetingTimer = null;
+let pendingMeeting = null;
+
+function flushMeeting() {
+  clearTimeout(meetingTimer);
+  if (!pendingMeeting) return;
+  const { boardId, changes } = pendingMeeting;
+  pendingMeeting = null;
+  try { store.updateMeeting(boardId, changes); } catch (e) { showMessage(e.message); }
+}
+
+function queueMeetingSave(boardId, changes) {
+  const same = pendingMeeting && pendingMeeting.boardId === boardId;
+  if (pendingMeeting && !same) flushMeeting();
+  pendingMeeting = { boardId, changes: { ...(same ? pendingMeeting.changes : {}), ...changes } };
+  clearTimeout(meetingTimer);
+  meetingTimer = setTimeout(flushMeeting, 400);
+}
+window.addEventListener('pagehide', flushMeeting);
+window.addEventListener('beforeunload', flushMeeting);
+
 function selectBoard(id) {
+  flushMeeting();
   view.boardId = id;
-  if (id === null && view.mode === 'board') view.mode = 'list'; // columns only make sense for one board
+  const board = id ? boardById(id) : null;
+  if (board?.kind === 'meeting') {
+    view.mode = 'notes';
+  } else {
+    if (view.mode === 'notes') view.mode = view.lastMode;
+    if (!board && view.mode === 'board') view.mode = 'list'; // columns only make sense for one board
+  }
   saveUi();
   render();
+}
+
+function navItem(board) {
+  const meeting = board.kind === 'meeting';
+  const n = store.tasks.filter((t) => t.boardId === board.id && !t.done).length;
+  const label = el('span', { class: 'nav-label' }, el('span', { text: board.name }),
+    meeting && board.meeting.date ? el('small', { text: formatDue(board.meeting.date) }) : null);
+  const li = el('li', { class: 'nav-item' },
+    el('button', { class: 'nav-btn', type: 'button', 'aria-current': view.boardId === board.id,
+      onclick: () => selectBoard(board.id) },
+    label, el('span', { class: 'count', text: String(n) })));
+  if (board.id !== INBOX_ID) {
+    const kind = meeting ? 'meeting' : 'board';
+    li.append(
+      el('button', { class: 'mini', type: 'button', 'aria-label': `Rename ${kind} ${board.name}`, text: '✎',
+        onclick: () => {
+          const name = prompt(`Rename ${kind}`, board.name);
+          if (name !== null) guard(() => { store.renameBoard(board.id, name); render(); });
+        } }),
+      el('button', { class: 'mini', type: 'button', 'aria-label': `Delete ${kind} ${board.name}`, text: '✕',
+        onclick: () => {
+          const msg = meeting
+            ? `Delete meeting "${board.name}"? Its notes are deleted and its action items move to the Inbox.`
+            : `Delete board "${board.name}"? Its cards move to the Inbox.`;
+          if (!confirm(msg)) return;
+          guard(() => {
+            flushMeeting();
+            store.deleteBoard(board.id);
+            if (view.boardId === board.id) {
+              view.mode = view.lastMode === 'board' ? 'board' : 'list';
+              view.boardId = view.mode === 'board' ? INBOX_ID : null;
+            }
+            saveUi();
+            render();
+          });
+        } }));
+  }
+  return li;
 }
 
 function renderBoards() {
@@ -88,33 +157,14 @@ function renderBoards() {
   ul.append(el('li', { class: 'nav-item' },
     el('button', { class: 'nav-btn', type: 'button', 'aria-current': view.boardId === null,
       onclick: () => selectBoard(null) }, el('span', { text: 'All boards' }))));
+  for (const board of store.boards.filter((b) => b.kind !== 'meeting')) ul.append(navItem(board));
 
-  for (const board of store.boards) {
-    const n = store.tasks.filter((t) => t.boardId === board.id && !t.done).length;
-    const li = el('li', { class: 'nav-item' },
-      el('button', { class: 'nav-btn', type: 'button', 'aria-current': view.boardId === board.id,
-        onclick: () => selectBoard(board.id) },
-      el('span', { text: board.name }), el('span', { class: 'count', text: String(n) })));
-    if (board.id !== INBOX_ID) {
-      li.append(
-        el('button', { class: 'mini', type: 'button', 'aria-label': `Rename board ${board.name}`, text: '✎',
-          onclick: () => {
-            const name = prompt('Rename board', board.name);
-            if (name !== null) guard(() => { store.renameBoard(board.id, name); render(); });
-          } }),
-        el('button', { class: 'mini', type: 'button', 'aria-label': `Delete board ${board.name}`, text: '✕',
-          onclick: () => {
-            if (!confirm(`Delete board "${board.name}"? Its cards move to the Inbox.`)) return;
-            guard(() => {
-              store.deleteBoard(board.id);
-              if (view.boardId === board.id) view.boardId = view.mode === 'board' ? INBOX_ID : null;
-              saveUi();
-              render();
-            });
-          } }));
-    }
-    ul.append(li);
-  }
+  const mu = $('meeting-nav');
+  mu.replaceChildren();
+  const meetings = store.boards.filter((b) => b.kind === 'meeting')
+    .sort((a, b) => (b.meeting.date ?? '').localeCompare(a.meeting.date ?? '')); // newest first, undated last
+  if (!meetings.length) mu.append(el('li', { class: 'count empty-note', text: 'No meetings yet' }));
+  for (const board of meetings) mu.append(navItem(board));
 }
 
 function renderTags() {
@@ -309,8 +359,52 @@ function renderBoard(tasks) {
   el('button', { type: 'submit', class: 'btn', text: 'Add column' })));
 }
 
+function renderNotes(board) {
+  const m = board.meeting;
+  const root = $('notes-view');
+  root.replaceChildren();
+
+  const date = el('input', { id: 'meeting-date', type: 'date' });
+  date.value = m.date ?? '';
+  date.addEventListener('change', () => {
+    flushMeeting();
+    guard(() => { store.updateMeeting(board.id, { date: date.value }); renderBoards(); });
+  });
+  const attendees = el('input', { id: 'meeting-attendees', placeholder: 'Names, comma separated', maxlength: '300', autocomplete: 'off' });
+  attendees.value = m.attendees;
+  attendees.addEventListener('input', () => queueMeetingSave(board.id, { attendees: attendees.value }));
+  attendees.addEventListener('blur', flushMeeting);
+  const notes = el('textarea', { id: 'meeting-notes', rows: '14', placeholder: 'Agenda, discussion, decisions…' });
+  notes.value = m.notes;
+  notes.addEventListener('input', () => queueMeetingSave(board.id, { notes: notes.value }));
+  notes.addEventListener('blur', flushMeeting);
+
+  const today = todayISO();
+  const items = store.tasks.filter((t) => t.boardId === board.id);
+  const open = items.filter((t) => !t.done).length;
+  const list = el('ul', { class: 'action-list' }, ...items.map((t) => el('li', { class: `action${t.done ? ' done' : ''}` },
+    el('input', { type: 'checkbox', checked: t.done, 'aria-label': `Mark "${t.title}" ${t.done ? 'not done' : 'done'}`,
+      onchange: () => { store.toggleTask(t.id); render(); } }),
+    el('button', { type: 'button', class: 'action-title', text: t.title, onclick: () => openDialog(t) }),
+    t.dueDate && el('span', { class: `cell-muted due${isOverdue(t, today) ? ' overdue' : ''}`, text: formatDue(t.dueDate) }),
+    pill(t.priority, PRIORITY_LABEL[t.priority]))));
+
+  root.append(
+    el('div', { class: 'notes-panel' },
+      el('div', { class: 'notes-fields' },
+        el('label', {}, 'Date', date),
+        el('label', { class: 'grow' }, 'Attendees', attendees)),
+      el('label', {}, 'Meeting notes', notes)),
+    el('div', { class: 'notes-panel' },
+      el('div', { class: 'notes-head' },
+        el('h2', { text: `Action items (${open} open)` }),
+        el('button', { type: 'button', class: 'btn', text: '+ Add action item', onclick: () => openDialog(null) })),
+      items.length ? list : el('p', { class: 'count', text: 'No action items yet. Add one, or drag them around in the Board tab.' })));
+}
+
 // ---------- Page ----------
 function pageTitle() {
+  if (view.mode === 'notes' && currentBoard()) return currentBoard().name;
   const parts = [currentBoard()?.name ?? 'All boards'];
   const f = FILTERS.find(([k]) => k === view.filter);
   if (f && view.filter !== 'all') parts.push(f[1]);
@@ -319,21 +413,33 @@ function pageTitle() {
 }
 
 function renderTasks() {
+  const board = currentBoard();
+  const isMeeting = board?.kind === 'meeting';
+  if (view.mode === 'notes' && !isMeeting) view.mode = view.lastMode === 'board' && board ? 'board' : 'list';
+  if (view.mode === 'board' && !board) view.mode = 'list';
+  const mode = view.mode;
+
+  $('tab-notes').hidden = !isMeeting;
+  for (const [id, name] of [['list-view', 'list'], ['board-view', 'board'], ['notes-view', 'notes']]) $(id).hidden = mode !== name;
+  for (const [id, name] of [['tab-notes', 'notes'], ['tab-list', 'list'], ['tab-board', 'board']]) $(id).setAttribute('aria-selected', String(mode === name));
+  $('toolbar').hidden = mode === 'notes';
+  $('page-title').textContent = pageTitle();
+
+  if (mode === 'notes') {
+    renderNotes(board);
+    $('empty').hidden = true;
+    return;
+  }
   const tasks = queryTasks(store.tasks,
     { boardId: view.boardId, status: view.filter, tag: view.tag, search: view.search, sort: view.sort }, todayISO());
-  const board = view.mode === 'board';
-  $('list-view').hidden = board;
-  $('board-view').hidden = !board;
-  $('tab-list').setAttribute('aria-selected', String(!board));
-  $('tab-board').setAttribute('aria-selected', String(board));
-  if (board) renderBoard(tasks); else renderListView(tasks);
-  $('empty').hidden = tasks.length > 0 || board;
+  if (mode === 'board') renderBoard(tasks); else renderListView(tasks);
+  $('empty').hidden = tasks.length > 0 || mode === 'board';
   $('count').textContent = `${tasks.length} card${tasks.length === 1 ? '' : 's'}`;
-  $('page-title').textContent = pageTitle();
   $('clear-done').disabled = !store.tasks.some((t) => t.done);
 }
 
 function render() {
+  flushMeeting();
   renderFilters();
   renderBoards();
   renderTags();
@@ -341,11 +447,14 @@ function render() {
 }
 
 function setMode(mode) {
+  flushMeeting();
   view.mode = mode;
+  if (mode !== 'notes') view.lastMode = mode;
   if (mode === 'board' && !view.boardId) view.boardId = INBOX_ID; // the board view shows one board's columns
   saveUi();
   render();
 }
+$('tab-notes').addEventListener('click', () => setMode('notes'));
 $('tab-list').addEventListener('click', () => setMode('list'));
 $('tab-board').addEventListener('click', () => setMode('board'));
 
@@ -361,7 +470,10 @@ function fillColumns(boardId, selected) {
 function openDialog(task, preset = {}) {
   editingId = task ? task.id : null;
   $('task-form').reset();
-  $('board').replaceChildren(...store.boards.map((b) => el('option', { value: b.id, text: b.name })));
+  const group = (label, boards) => (boards.length ? el('optgroup', { label }, ...boards.map((b) => el('option', { value: b.id, text: b.name }))) : null);
+  $('board').replaceChildren(
+    group('Boards', store.boards.filter((b) => b.kind !== 'meeting')),
+    group('Meetings', store.boards.filter((b) => b.kind === 'meeting')));
   $('dlg-title').textContent = task ? 'Edit card' : 'Create card';
   $('submit-btn').textContent = task ? 'Save' : 'Create';
   $('title').value = task?.title ?? '';
@@ -408,6 +520,21 @@ $('board-form').addEventListener('submit', (e) => {
     render();
   });
 });
+$('new-meeting-date').value = todayISO();
+$('meeting-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  guard(() => {
+    flushMeeting();
+    const meeting = store.addBoard($('new-meeting-name').value, { kind: 'meeting', date: $('new-meeting-date').value || null });
+    $('new-meeting-name').value = '';
+    $('new-meeting-date').value = todayISO();
+    view.boardId = meeting.id;
+    view.mode = 'notes';
+    saveUi();
+    render();
+    $('meeting-notes')?.focus();
+  });
+});
 $('search').addEventListener('input', (e) => { view.search = e.target.value; renderTasks(); });
 $('sort').addEventListener('change', (e) => { view.sort = e.target.value; renderTasks(); });
 $('clear-done').addEventListener('click', () => {
@@ -432,6 +559,7 @@ $('import-file').addEventListener('change', async (e) => {
   if (!confirm('Importing replaces all current boards and cards. Continue?')) return;
   try {
     store.importJSON(await file.text());
+    view.mode = view.lastMode === 'board' ? 'board' : 'list';
     view.boardId = view.mode === 'board' ? INBOX_ID : null;
     view.tag = null;
     saveUi();
