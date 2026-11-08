@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Store, INBOX_ID, STORAGE_KEY, queryTasks, isOverdue, normalizeTags, sanitizeState } from '../js/store.js';
+import fs from 'node:fs';
+import vm from 'node:vm';
+
+// store.js is a classic script (so the app opens from file://); load it and read its global.
+vm.runInThisContext(fs.readFileSync(new URL('../js/store.js', import.meta.url), 'utf8'));
+const { Store, INBOX_ID, STORAGE_KEY, queryTasks, isOverdue, normalizeTags, sanitizeState } = globalThis.TodoStore;
 
 function memoryStorage(initial = {}) {
   const data = { ...initial };

@@ -12,13 +12,9 @@ A local, dependency-free to-do app. Everything runs in the browser and is saved 
 - Light/dark theme follows your system
 
 ## Run
-ES modules need `http://`, so serve the folder rather than opening the file directly:
+No install or server needed: double-click `index.html` (or drag it into a browser) and bookmark it.
 
-```bash
-python3 -m http.server 8000
-```
-
-Then open <http://localhost:8000>.
+Keep the file in one place: browsers store the data per file location, so moving it starts you with an empty list. Use Export JSON to back up or move your tasks.
 
 ## Test
 Requires Node 18+.
@@ -29,8 +25,6 @@ node --test tests/*.test.js
 
 ## Layout
 - `index.html`, `styles.css` — page and styling
-- `js/store.js` — data layer (storage, CRUD, filtering/sorting); no DOM access
+- `js/store.js` — data layer (storage, CRUD, filtering/sorting); no DOM access. A classic script exposing `TodoStore`, so the app works from `file://`
 - `js/app.js` — UI rendering and events
 - `tests/store.test.js` — unit tests for the data layer
-
-Data is stored per browser and per origin (`localhost:8000` differs from other ports), so use Export to move or back up your tasks.
