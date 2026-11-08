@@ -11,21 +11,21 @@
   <div class="app">
     <aside class="sidebar" aria-label="Navigation">
       <div class="brand"><span class="logo" aria-hidden="true">✓</span> To-Do</div>
-      <button type="button" id="create-btn" class="btn primary create">+ Create</button>
+      <button type="button" id="create-btn" class="btn primary create">+ Create card</button>
 
       <nav>
         <section>
-          <h2>Show</h2>
-          <ul id="status-filters" class="nav-list"></ul>
-        </section>
-        <section>
-          <h2>Lists</h2>
-          <ul id="list-nav" class="nav-list"></ul>
-          <form id="list-form" class="inline-form">
-            <label class="sr-only" for="list-name">New list name</label>
-            <input id="list-name" placeholder="New list" maxlength="40" autocomplete="off">
+          <h2>Boards</h2>
+          <ul id="board-nav" class="nav-list"></ul>
+          <form id="board-form" class="inline-form">
+            <label class="sr-only" for="board-name">New board name</label>
+            <input id="board-name" placeholder="New board" maxlength="40" autocomplete="off">
             <button type="submit" class="btn">Add</button>
           </form>
+        </section>
+        <section>
+          <h2>Show</h2>
+          <ul id="status-filters" class="nav-list"></ul>
         </section>
         <section>
           <h2>Tags</h2>
@@ -45,14 +45,14 @@
     <div class="content">
       <header class="topbar">
         <label class="search">
-          <span class="sr-only">Search tasks</span>
-          <input id="search" type="search" placeholder="Search tasks, notes, tags…" autocomplete="off">
+          <span class="sr-only">Search cards</span>
+          <input id="search" type="search" placeholder="Search cards, notes, tags…" autocomplete="off">
         </label>
       </header>
 
       <main>
         <div class="page-head">
-          <h1 id="page-title">All tasks</h1>
+          <h1 id="page-title">All boards</h1>
           <div class="tabs" role="tablist" aria-label="View">
             <button type="button" role="tab" id="tab-list" aria-selected="true" aria-controls="list-view">List</button>
             <button type="button" role="tab" id="tab-board" aria-selected="false" aria-controls="board-view">Board</button>
@@ -75,25 +75,20 @@
 
         <section id="list-view" role="tabpanel" aria-labelledby="tab-list"></section>
         <section id="board-view" class="board" role="tabpanel" aria-labelledby="tab-board" hidden></section>
-        <p id="empty" class="empty" hidden>No tasks match. Use <strong>Create</strong> to add one.</p>
+        <p id="empty" class="empty" hidden>No cards match. Use <strong>Create card</strong> to add one.</p>
       </main>
     </div>
   </div>
 
   <dialog id="task-dialog" aria-labelledby="dlg-title">
     <form id="task-form">
-      <h2 id="dlg-title">Create task</h2>
+      <h2 id="dlg-title">Create card</h2>
       <label>Title
         <input id="title" required maxlength="200" autocomplete="off" placeholder="What needs doing?">
       </label>
       <div class="grid2">
-        <label>Status
-          <select id="status">
-            <option value="todo">To do</option>
-            <option value="doing">Doing</option>
-            <option value="done">Done</option>
-          </select>
-        </label>
+        <label>Board <select id="board"></select></label>
+        <label>Column <select id="column"></select></label>
         <label>Priority
           <select id="priority">
             <option value="low">Low</option>
@@ -102,7 +97,6 @@
           </select>
         </label>
         <label>Due date <input id="due" type="date"></label>
-        <label>List <select id="list"></select></label>
       </div>
       <label>Tags <input id="tags" placeholder="comma, separated" autocomplete="off"></label>
       <label>Notes <textarea id="notes" rows="3"></textarea></label>
