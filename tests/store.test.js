@@ -377,7 +377,7 @@ test('meetings: created with a date, own default columns, notes fields', () => {
   const s = new Store(memoryStorage());
   const m = s.addBoard('Weekly sync', { kind: 'meeting', date: '2026-11-10' });
   assert.equal(m.kind, 'meeting');
-  assert.deepEqual(m.meeting, { date: '2026-11-10', attendees: '', notes: '' });
+  assert.deepEqual(m.meeting, { date: '2026-11-10', attendees: '', notes: '', checklist: [] });
   assert.deepEqual(m.columns.map((c) => [c.name, c.done]), [['Action items', false], ['In progress', false], ['Done', true]]);
   assert.equal(s.boards[0].kind, 'board');
   assert.equal(s.addBoard('Plain').kind, 'board');
@@ -403,7 +403,7 @@ test('meetings: updateMeeting saves date, attendees and notes; rejects regular b
   s.updateMeeting(m.id, { date: '2026-12-01', attendees: 'Ana, Rui', notes: 'Line 1\nLine 2' });
   s.updateMeeting(m.id, { notes: 'Only notes changed' });
   const again = new Store(storage).boards.find((b) => b.id === m.id);
-  assert.deepEqual(again.meeting, { date: '2026-12-01', attendees: 'Ana, Rui', notes: 'Only notes changed' });
+  assert.deepEqual(again.meeting, { date: '2026-12-01', attendees: 'Ana, Rui', notes: 'Only notes changed', checklist: [] });
   s.updateMeeting(m.id, { date: '' });
   assert.equal(s.boards.find((b) => b.id === m.id).meeting.date, null);
   assert.throws(() => s.updateMeeting(INBOX_ID, { notes: 'x' }), /not a meeting/);
@@ -431,13 +431,69 @@ test('meetings survive export/import and sanitizing; old boards default to kind 
   b.importJSON(a.exportJSON());
   const got = b.boards.find((x) => x.name === 'Board mtg');
   assert.equal(got.kind, 'meeting');
-  assert.deepEqual(got.meeting, { date: '2026-11-10', attendees: 'Ana', notes: 'Decisions' });
+  assert.deepEqual(got.meeting, { date: '2026-11-10', attendees: 'Ana', notes: 'Decisions', checklist: [] });
   const st = sanitizeState({
     boards: [{ id: 'old', name: 'Old board', columns: [{ id: 'c', name: 'One' }] }, { id: 'm', name: 'M', kind: 'meeting', meeting: { date: 5, notes: 7 } }],
     tasks: [],
   });
   assert.equal(st.boards.find((x) => x.id === 'old').kind, 'board');
   const mt = st.boards.find((x) => x.id === 'm');
-  assert.deepEqual(mt.meeting, { date: null, attendees: '', notes: '' });
+  assert.deepEqual(mt.meeting, { date: null, attendees: '', notes: '', checklist: [] });
   assert.deepEqual(mt.columns.map((c) => c.name), ['Action items', 'In progress', 'Done']);
+});
+
+test('meeting checklist: add, edit, tick, delete, clear checked', () => {
+  const storage = memoryStorage();
+  const s = new Store(storage);
+  const m = s.addBoard('Kickoff', { kind: 'meeting' });
+  const a = s.addChecklistItem(m.id, '  Confirm venue ');
+  const b = s.addChecklistItem(m.id, 'Send agenda');
+  const c = s.addChecklistItem(m.id, 'Book catering');
+  assert.deepEqual(m.meeting.checklist.map((i) => [i.text, i.done]), [['Confirm venue', false], ['Send agenda', false], ['Book catering', false]]);
+  s.updateChecklistItem(m.id, a.id, { done: true });
+  s.updateChecklistItem(m.id, b.id, { text: 'Send agenda by Friday', done: true });
+  assert.equal(s.clearCheckedItems(m.id), 2);
+  assert.deepEqual(m.meeting.checklist.map((i) => i.text), ['Book catering']);
+  s.deleteChecklistItem(m.id, c.id);
+  assert.deepEqual(m.meeting.checklist, []);
+  s.deleteChecklistItem(m.id, 'nope'); // unknown id is a no-op
+  s.addChecklistItem(m.id, 'Persisted');
+  const again = new Store(storage).boards.find((x) => x.id === m.id);
+  assert.deepEqual(again.meeting.checklist.map((i) => i.text), ['Persisted']);
+});
+
+test('meeting checklist: validation and non-meeting boards', () => {
+  const s = new Store(memoryStorage());
+  const m = s.addBoard('Kickoff', { kind: 'meeting' });
+  const item = s.addChecklistItem(m.id, 'x');
+  assert.throws(() => s.addChecklistItem(m.id, '   '), /required/);
+  assert.throws(() => s.updateChecklistItem(m.id, item.id, { text: '' }), /required/);
+  assert.equal(m.meeting.checklist[0].text, 'x'); // unchanged after a rejected edit
+  assert.throws(() => s.updateChecklistItem(m.id, 'nope', { done: true }), /not found/);
+  assert.throws(() => s.addChecklistItem(INBOX_ID, 'x'), /not a meeting/);
+  assert.throws(() => s.addChecklistItem('nope', 'x'));
+  assert.throws(() => s.clearCheckedItems(INBOX_ID), /not a meeting/);
+});
+
+test('meeting checklist survives export/import; sanitizing repairs it; old meetings get an empty one', () => {
+  const a = new Store(memoryStorage());
+  const m = a.addBoard('Mtg', { kind: 'meeting' });
+  const i = a.addChecklistItem(m.id, 'Keep me');
+  a.updateChecklistItem(m.id, i.id, { done: true });
+  const b = new Store(memoryStorage());
+  b.importJSON(a.exportJSON());
+  assert.deepEqual(b.boards.find((x) => x.name === 'Mtg').meeting.checklist, [{ id: i.id, text: 'Keep me', done: true }]);
+  const st = sanitizeState({
+    boards: [
+      { id: 'm1', name: 'M1', kind: 'meeting', meeting: { checklist: [{ id: 'a', text: ' ok ', done: 1 }, { id: 'a', text: 'dup id' }, { text: '' }, null, 'junk', { text: 5 }] } },
+      { id: 'm2', name: 'M2', kind: 'meeting', meeting: { notes: 'old data without checklist' } },
+      { id: 'm3', name: 'M3', kind: 'meeting', meeting: { checklist: 'nope' } },
+    ],
+    tasks: [],
+  });
+  const list = st.boards.find((x) => x.id === 'm1').meeting.checklist;
+  assert.deepEqual(list.map((x) => [x.text, x.done]), [['ok', true], ['dup id', false]]);
+  assert.notEqual(list[0].id, list[1].id);
+  assert.deepEqual(st.boards.find((x) => x.id === 'm2').meeting.checklist, []);
+  assert.deepEqual(st.boards.find((x) => x.id === 'm3').meeting.checklist, []);
 });

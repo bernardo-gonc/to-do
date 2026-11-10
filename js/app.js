@@ -133,7 +133,7 @@ function navItem(board) {
       el('button', { class: 'mini', type: 'button', 'aria-label': `Delete ${kind} ${board.name}`, text: '✕',
         onclick: () => {
           const msg = meeting
-            ? `Delete meeting "${board.name}"? Its notes are deleted and its action items move to the Inbox.`
+            ? `Delete meeting "${board.name}"? Its notes and checklist are deleted and its action items move to the Inbox.`
             : `Delete board "${board.name}"? Its cards move to the Inbox.`;
           if (!confirm(msg)) return;
           guard(() => {
@@ -359,6 +359,65 @@ function renderBoard(tasks) {
   el('button', { type: 'submit', class: 'btn', text: 'Add column' })));
 }
 
+// The checklist panel redraws on its own so that typing in the notes box is never interrupted.
+function renderChecklist(board, panel) {
+  const items = board.meeting.checklist;
+  const done = items.filter((i) => i.done).length;
+  const refresh = () => renderChecklist(board, panel);
+  const run = (fn, refocus = false) => {
+    guard(fn);
+    refresh();
+    if (refocus) panel.querySelector('.check-add input')?.focus();
+  };
+
+  const rows = items.map((item) => {
+    const text = el('input', { class: 'check-text', maxlength: '300', autocomplete: 'off', 'aria-label': 'Checklist item' });
+    text.value = item.text;
+    text.addEventListener('change', () => {
+      try {
+        store.updateChecklistItem(board.id, item.id, { text: text.value });
+        showMessage('');
+      } catch (e) {
+        showMessage(e.message);
+        refresh(); // put the old text back
+      }
+    });
+    text.addEventListener('keydown', (e) => { if (e.key === 'Enter') text.blur(); });
+    return el('li', { class: `check-item${item.done ? ' done' : ''}` },
+      el('input', { type: 'checkbox', checked: item.done, 'aria-label': `Mark "${item.text}" ${item.done ? 'not done' : 'done'}`,
+        onchange: (e) => run(() => store.updateChecklistItem(board.id, item.id, { done: e.target.checked })) }),
+      text,
+      el('button', { type: 'button', class: 'mini', text: '✕', 'aria-label': `Delete checklist item "${item.text}"`,
+        onclick: () => run(() => store.deleteChecklistItem(board.id, item.id)) }));
+  });
+
+  const input = el('input', { id: 'check-new', placeholder: 'Add an item and press Enter', maxlength: '300', autocomplete: 'off' });
+  // Pasting several lines (an agenda, a list) adds one item per line.
+  input.addEventListener('paste', (e) => {
+    const pasted = e.clipboardData?.getData('text') ?? '';
+    if (!/\r?\n/.test(pasted.trim())) return;
+    e.preventDefault();
+    const lines = pasted.split(/\r?\n/).map((l) => l.replace(/^\s*(?:[-*•]|\d+[.)]|\[[ xX]?\])\s*/, '').trim()).filter(Boolean);
+    run(() => lines.forEach((l) => store.addChecklistItem(board.id, l)), true);
+  });
+  const form = el('form', { class: 'check-add',
+    onsubmit: (e) => { e.preventDefault(); run(() => store.addChecklistItem(board.id, input.value), true); } },
+  el('label', { class: 'sr-only', for: 'check-new', text: 'New checklist item' }), input,
+  el('button', { type: 'submit', class: 'btn', text: 'Add' }));
+
+  panel.replaceChildren(
+    el('div', { class: 'notes-head' },
+      el('h2', { text: `Checklist${items.length ? ` (${done}/${items.length})` : ''}` }),
+      done ? el('button', { type: 'button', class: 'btn', text: 'Clear checked', onclick: () => run(() => store.clearCheckedItems(board.id)) }) : null),
+    items.length
+      ? el('div', { class: 'progress', role: 'progressbar', 'aria-label': 'Checklist progress', 'aria-valuemin': '0',
+        'aria-valuemax': String(items.length), 'aria-valuenow': String(done) },
+      el('span', { style: `width:${Math.round((done / items.length) * 100)}%` }))
+      : null,
+    items.length ? el('ul', { class: 'check-list' }, ...rows) : el('p', { class: 'count', text: 'No items yet. Add agenda points or things to confirm. Pasting a list adds one item per line.' }),
+    form);
+}
+
 function renderNotes(board) {
   const m = board.meeting;
   const root = $('notes-view');
@@ -389,12 +448,16 @@ function renderNotes(board) {
     t.dueDate && el('span', { class: `cell-muted due${isOverdue(t, today) ? ' overdue' : ''}`, text: formatDue(t.dueDate) }),
     pill(t.priority, PRIORITY_LABEL[t.priority]))));
 
+  const checklistPanel = el('div', { class: 'notes-panel', id: 'checklist-panel' });
+  renderChecklist(board, checklistPanel);
+
   root.append(
     el('div', { class: 'notes-panel' },
       el('div', { class: 'notes-fields' },
         el('label', {}, 'Date', date),
         el('label', { class: 'grow' }, 'Attendees', attendees)),
       el('label', {}, 'Meeting notes', notes)),
+    checklistPanel,
     el('div', { class: 'notes-panel' },
       el('div', { class: 'notes-head' },
         el('h2', { text: `Action items (${open} open)` }),

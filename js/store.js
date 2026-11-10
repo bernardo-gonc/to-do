@@ -47,11 +47,25 @@ function meetingColumns() {
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const isoOrNull = (d) => (typeof d === 'string' && ISO_DATE.test(d) ? d : null);
 
+function cleanChecklist(items) {
+  if (!Array.isArray(items)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const i of items) {
+    if (!i || typeof i.text !== 'string' || !i.text.trim()) continue;
+    const id = typeof i.id === 'string' && !seen.has(i.id) ? i.id : newId();
+    seen.add(id);
+    out.push({ id, text: i.text.trim(), done: Boolean(i.done) });
+  }
+  return out;
+}
+
 function cleanMeeting(m) {
   return {
     date: isoOrNull(m?.date),
     attendees: typeof m?.attendees === 'string' ? m.attendees : '',
     notes: typeof m?.notes === 'string' ? m.notes : '',
+    checklist: cleanChecklist(m?.checklist),
   };
 }
 
@@ -295,7 +309,7 @@ class Store {
       throw new Error('A board with that name already exists.');
     }
     const board = meeting
-      ? { id: newId(), name: clean, kind: 'meeting', meeting: { date: isoOrNull(date), attendees: '', notes: '' }, columns: meetingColumns() }
+      ? { id: newId(), name: clean, kind: 'meeting', meeting: { date: isoOrNull(date), attendees: '', notes: '', checklist: [] }, columns: meetingColumns() }
       : { id: newId(), name: clean, kind: 'board', columns: defaultColumns() };
     this.state.boards.push(board);
     this.#save();
@@ -316,15 +330,58 @@ class Store {
   }
 
   // Date, attendees and notes of a meeting board.
-  updateMeeting(boardId, changes) {
+  #meeting(boardId) {
     const board = this.#board(boardId);
     if (board.kind !== 'meeting') throw new Error('That board is not a meeting.');
-    const m = board.meeting;
+    return board.meeting;
+  }
+
+  updateMeeting(boardId, changes) {
+    const m = this.#meeting(boardId);
     if ('date' in changes) m.date = isoOrNull(changes.date);
     if ('attendees' in changes) m.attendees = String(changes.attendees);
     if ('notes' in changes) m.notes = String(changes.notes);
     this.#save();
     return m;
+  }
+
+  // ---- Meeting checklist (agenda points, things to confirm) ----
+  addChecklistItem(boardId, text) {
+    const m = this.#meeting(boardId);
+    const clean = String(text ?? '').trim();
+    if (!clean) throw new Error('Checklist item text is required.');
+    const item = { id: newId(), text: clean, done: false };
+    m.checklist.push(item);
+    this.#save();
+    return item;
+  }
+
+  updateChecklistItem(boardId, itemId, changes) {
+    const m = this.#meeting(boardId);
+    const item = m.checklist.find((i) => i.id === itemId);
+    if (!item) throw new Error('Checklist item not found.');
+    if ('text' in changes) {
+      const clean = String(changes.text ?? '').trim();
+      if (!clean) throw new Error('Checklist item text is required.');
+      item.text = clean;
+    }
+    if ('done' in changes) item.done = Boolean(changes.done);
+    this.#save();
+    return item;
+  }
+
+  deleteChecklistItem(boardId, itemId) {
+    const m = this.#meeting(boardId);
+    m.checklist = m.checklist.filter((i) => i.id !== itemId);
+    this.#save();
+  }
+
+  clearCheckedItems(boardId) {
+    const m = this.#meeting(boardId);
+    const before = m.checklist.length;
+    m.checklist = m.checklist.filter((i) => !i.done);
+    this.#save();
+    return before - m.checklist.length;
   }
 
   // Cards of the deleted board move to the Inbox (keeping their done state).
