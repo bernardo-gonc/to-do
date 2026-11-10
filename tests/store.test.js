@@ -5,7 +5,7 @@ import vm from 'node:vm';
 
 // store.js is a classic script (so the app opens from file://); load it and read its global.
 vm.runInThisContext(fs.readFileSync(new URL('../js/store.js', import.meta.url), 'utf8'));
-const { Store, INBOX_ID, STORAGE_KEY, queryTasks, isOverdue, normalizeTags, sanitizeState } = globalThis.TodoStore;
+const { Store, INBOX_ID, STORAGE_KEY, queryTasks, isOverdue, normalizeTags, sanitizeState, checklistProgress } = globalThis.TodoStore;
 
 function memoryStorage(initial = {}) {
   const data = { ...initial };
@@ -496,4 +496,69 @@ test('meeting checklist survives export/import; sanitizing repairs it; old meeti
   assert.notEqual(list[0].id, list[1].id);
   assert.deepEqual(st.boards.find((x) => x.id === 'm2').meeting.checklist, []);
   assert.deepEqual(st.boards.find((x) => x.id === 'm3').meeting.checklist, []);
+});
+
+test('card checklists: create with checklists, edit, replace, persist', () => {
+  const storage = memoryStorage();
+  const s = new Store(storage);
+  const t = s.addTask({
+    title: 'Hotels',
+    checklists: [
+      { title: ' To receive ', items: [{ text: 'Lithuania', done: true }, { text: ' Cyprus ' }, { text: '   ' }] },
+      { title: '', hideChecked: 1, items: [] },
+    ],
+  });
+  assert.deepEqual(t.checklists.map((c) => [c.title, c.hideChecked, c.items.map((i) => [i.text, i.done])]),
+    [['To receive', false, [['Lithuania', true], ['Cyprus', false]]], ['Checklist', true, []]]);
+  assert.ok(t.checklists[0].id && t.checklists[0].items[0].id);
+  assert.deepEqual(checklistProgress(t), { done: 1, total: 2 });
+
+  const next = JSON.parse(JSON.stringify(t.checklists));
+  next[0].items[1].done = true;
+  next.push({ title: 'To pay', items: [{ text: 'France' }] });
+  s.updateTask(t.id, { checklists: next });
+  assert.deepEqual(checklistProgress(s.tasks[0]), { done: 2, total: 3 });
+  assert.equal(s.tasks[0].checklists[0].id, t.checklists[0].id, 'existing checklist ids are kept');
+
+  s.updateTask(t.id, { title: 'Hotels 2' }); // other edits leave checklists alone
+  assert.equal(s.tasks[0].checklists.length, 3);
+  assert.deepEqual(checklistProgress(new Store(storage).tasks[0]), { done: 2, total: 3 });
+  s.updateTask(t.id, { checklists: [] });
+  assert.deepEqual(checklistProgress(s.tasks[0]), { done: 0, total: 0 });
+  assert.deepEqual(checklistProgress({}), { done: 0, total: 0 });
+});
+
+test('card checklists: toggling a card done does not touch checklists; sanitize repairs bad data', () => {
+  const s = new Store(memoryStorage());
+  const t = s.addTask({ title: 'a', checklists: [{ title: 'L', items: [{ text: 'x' }] }] });
+  s.toggleTask(t.id);
+  assert.equal(s.tasks[0].done, true);
+  assert.deepEqual(checklistProgress(s.tasks[0]), { done: 0, total: 1 });
+  const st = sanitizeState({
+    boards: [],
+    tasks: [
+      { title: 'old card without checklists' },
+      { title: 'bad', checklists: [null, 'x', { id: 'a', title: 5, items: 'nope' }, { id: 'a', title: 'dup', items: [{ id: 'i', text: 'ok', done: 1 }] }] },
+      { title: 'worse', checklists: 'nope' },
+    ],
+  });
+  assert.deepEqual(st.tasks[0].checklists, []);
+  assert.deepEqual(st.tasks[2].checklists, []);
+  const lists = st.tasks[1].checklists;
+  assert.deepEqual(lists.map((l) => [l.title, l.items.length]), [['Checklist', 0], ['dup', 1]]);
+  assert.notEqual(lists[0].id, lists[1].id);
+  assert.equal(lists[1].items[0].done, true);
+});
+
+test('card checklists: search finds checklist titles and items; export/import keeps them', () => {
+  const a = new Store(memoryStorage());
+  a.addTask({ title: 'Hotels', checklists: [{ title: 'Por pagar', items: [{ text: 'Estonia' }] }] });
+  a.addTask({ title: 'Other' });
+  const names = (q) => queryTasks(a.tasks, { search: q }).map((t) => t.title);
+  assert.deepEqual(names('estonia'), ['Hotels']);
+  assert.deepEqual(names('POR PAGAR'), ['Hotels']);
+  assert.deepEqual(names('nothing'), []);
+  const b = new Store(memoryStorage());
+  b.importJSON(a.exportJSON());
+  assert.deepEqual(checklistProgress(b.tasks.find((t) => t.title === 'Hotels')), { done: 0, total: 1 });
 });

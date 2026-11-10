@@ -60,6 +60,38 @@ function cleanChecklist(items) {
   return out;
 }
 
+// Named checklists on a card: [{ id, title, hideChecked, items: [{ id, text, done }] }]
+function cleanChecklists(lists) {
+  if (!Array.isArray(lists)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const l of lists) {
+    if (!l || typeof l !== 'object') continue;
+    const id = typeof l.id === 'string' && !seen.has(l.id) ? l.id : newId();
+    seen.add(id);
+    out.push({
+      id,
+      title: typeof l.title === 'string' && l.title.trim() ? l.title.trim() : 'Checklist',
+      hideChecked: Boolean(l.hideChecked),
+      items: cleanChecklist(l.items),
+    });
+  }
+  return out;
+}
+
+// Items done / total across all of a card's checklists.
+function checklistProgress(task) {
+  let done = 0;
+  let total = 0;
+  for (const list of task.checklists ?? []) {
+    for (const item of list.items) {
+      total += 1;
+      if (item.done) done += 1;
+    }
+  }
+  return { done, total };
+}
+
 function cleanMeeting(m) {
   return {
     date: isoOrNull(m?.date),
@@ -137,6 +169,7 @@ function sanitizeState(raw) {
       boardId: board.id,
       columnId: column.id,
       tags: normalizeTags(t.tags),
+      checklists: cleanChecklists(t.checklists),
       createdAt: Number.isFinite(t.createdAt) ? t.createdAt : Date.now(),
       completedAt: done ? (Number.isFinite(t.completedAt) ? t.completedAt : Date.now()) : null,
     });
@@ -204,7 +237,7 @@ class Store {
   }
 
   // ---- Tasks ----
-  addTask({ title, notes = '', priority = 'medium', dueDate = null, boardId = INBOX_ID, columnId = null, tags = [] }) {
+  addTask({ title, notes = '', priority = 'medium', dueDate = null, boardId = INBOX_ID, columnId = null, tags = [], checklists = [] }) {
     const clean = String(title ?? '').trim();
     if (!clean) throw new Error('Title is required.');
     const board = this.state.boards.find((b) => b.id === boardId) ?? this.state.boards[0];
@@ -219,6 +252,7 @@ class Store {
       boardId: board.id,
       columnId: column.id,
       tags: normalizeTags(tags),
+      checklists: cleanChecklists(checklists),
       createdAt: Date.now(),
       completedAt: null,
     };
@@ -239,6 +273,7 @@ class Store {
     if ('priority' in changes && PRIORITIES.includes(changes.priority)) task.priority = changes.priority;
     if ('dueDate' in changes) task.dueDate = changes.dueDate || null;
     if ('tags' in changes) task.tags = normalizeTags(changes.tags);
+    if ('checklists' in changes) task.checklists = cleanChecklists(changes.checklists);
     if ('boardId' in changes || 'columnId' in changes) {
       const board = this.state.boards.find((b) => b.id === (changes.boardId ?? task.boardId)) ?? this.#board(task.boardId);
       const column = board.columns.find((c) => c.id === changes.columnId)
@@ -496,7 +531,8 @@ function queryTasks(tasks, { boardId = null, status = 'all', tag = null, search 
     if (status === 'today' && (t.done || t.dueDate !== today)) return false;
     if (status === 'overdue' && !isOverdue(t, today)) return false;
     if (q) {
-      const hay = `${t.title}\n${t.notes}\n${t.tags.join(' ')}`.toLowerCase();
+      const lists = (t.checklists ?? []).map((c) => `${c.title} ${c.items.map((i) => i.text).join(' ')}`).join('\n');
+      const hay = `${t.title}\n${t.notes}\n${t.tags.join(' ')}\n${lists}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -520,5 +556,5 @@ function queryTasks(tasks, { boardId = null, status = 'all', tag = null, search 
   return result.sort((a, b) => Number(a.done) - Number(b.done) || cmp(a, b));
 }
 
-globalThis.TodoStore = { STORAGE_KEY, SCHEMA_VERSION, INBOX_ID, PRIORITIES, todayISO, normalizeTags, sanitizeState, Store, isOverdue, queryTasks };
+globalThis.TodoStore = { STORAGE_KEY, SCHEMA_VERSION, INBOX_ID, PRIORITIES, todayISO, normalizeTags, sanitizeState, Store, isOverdue, queryTasks, checklistProgress };
 })();

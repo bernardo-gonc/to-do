@@ -1,6 +1,6 @@
 (function () {
 'use strict';
-const { Store, INBOX_ID, queryTasks, isOverdue, todayISO } = globalThis.TodoStore;
+const { Store, INBOX_ID, queryTasks, isOverdue, todayISO, checklistProgress } = globalThis.TodoStore;
 
 const store = new Store();
 const $ = (id) => document.getElementById(id);
@@ -39,6 +39,19 @@ function el(tag, props = {}, ...children) {
 }
 
 const pill = (cls, text) => el('span', { class: `pill ${cls}`, text });
+
+// Pasted multi-line text becomes one item per line (bullets, numbers and [ ] stripped); single lines return null.
+function pastedLines(pasted) {
+  if (!/\r?\n/.test(pasted.trim())) return null;
+  return pasted.split(/\r?\n/).map((l) => l.replace(/^\s*(?:[-*•]|\d+[.)]|\[[ xX]?\])\s*/, '').trim()).filter(Boolean);
+}
+
+function checklistBadge(t) {
+  const { done, total } = checklistProgress(t);
+  return total
+    ? el('span', { class: `badge${done === total ? ' complete' : ''}`, title: 'Checklist items done', text: `☑ ${done}/${total}` })
+    : null;
+}
 
 function showMessage(text) {
   const m = $('message');
@@ -193,6 +206,7 @@ function columnSelect(t) {
 function taskRow(t, today) {
   const overdue = isOverdue(t, today);
   const sub = el('div', { class: 'sub' },
+    checklistBadge(t),
     ...t.tags.map((tag) => el('span', { class: 'chip', text: `#${tag}` })),
     t.notes && el('span', { class: 'notes-snip', text: t.notes.split('\n')[0].slice(0, 80) }));
 
@@ -273,6 +287,7 @@ function card(t, items, index) {
   el('div', { class: 'card-meta' },
     pill(t.priority, PRIORITY_LABEL[t.priority]),
     t.dueDate && el('span', { class: overdue ? 'due overdue' : '', text: `${overdue ? '⚠ ' : ''}${formatDue(t.dueDate)}` }),
+    checklistBadge(t),
     ...t.tags.map((tag) => el('span', { class: 'chip', text: `#${tag}` }))));
   return c;
 }
@@ -394,10 +409,9 @@ function renderChecklist(board, panel) {
   const input = el('input', { id: 'check-new', placeholder: 'Add an item and press Enter', maxlength: '300', autocomplete: 'off' });
   // Pasting several lines (an agenda, a list) adds one item per line.
   input.addEventListener('paste', (e) => {
-    const pasted = e.clipboardData?.getData('text') ?? '';
-    if (!/\r?\n/.test(pasted.trim())) return;
+    const lines = pastedLines(e.clipboardData?.getData('text') ?? '');
+    if (!lines) return;
     e.preventDefault();
-    const lines = pasted.split(/\r?\n/).map((l) => l.replace(/^\s*(?:[-*•]|\d+[.)]|\[[ xX]?\])\s*/, '').trim()).filter(Boolean);
     run(() => lines.forEach((l) => store.addChecklistItem(board.id, l)), true);
   });
   const form = el('form', { class: 'check-add',
@@ -524,6 +538,91 @@ $('tab-board').addEventListener('click', () => setMode('board'));
 // ---------- Create / edit dialog ----------
 const dlg = $('task-dialog');
 
+// ----- Checklists inside the card dialog: edited as a working copy, saved with the card (Cancel discards) -----
+let draftChecklists = [];
+
+function noEnterSubmit(input, onEnter) {
+  input.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault(); // Enter must not save the whole card
+    onEnter?.();
+  });
+}
+
+function draftChecklist(list, index) {
+  const total = list.items.length;
+  const done = list.items.filter((i) => i.done).length;
+  const pct = total ? Math.round((done / total) * 100) : 0;
+
+  const title = el('input', { class: 'cl-title', maxlength: '80', autocomplete: 'off', 'aria-label': 'Checklist title', 'data-focus': `title.${index}` });
+  title.value = list.title;
+  title.addEventListener('input', () => { list.title = title.value; });
+  noEnterSubmit(title, () => title.blur());
+
+  const rows = list.items.map((item, i) => {
+    if (list.hideChecked && item.done) return null;
+    const text = el('input', { class: 'check-text', maxlength: '300', autocomplete: 'off', 'aria-label': 'Checklist item' });
+    text.value = item.text;
+    text.addEventListener('input', () => { item.text = text.value; });
+    noEnterSubmit(text, () => text.blur());
+    return el('li', { class: `check-item${item.done ? ' done' : ''}` },
+      el('input', { type: 'checkbox', checked: item.done, 'data-focus': `item.${index}.${i}`,
+        'aria-label': `Mark "${item.text}" ${item.done ? 'not done' : 'done'}`,
+        onchange: (e) => { item.done = e.target.checked; renderDraftChecklists(`item.${index}.${i}`); } }),
+      text,
+      el('button', { type: 'button', class: 'mini', text: '✕', 'aria-label': `Delete item "${item.text}"`,
+        onclick: () => { list.items.splice(i, 1); renderDraftChecklists(`add.${index}`); } }));
+  });
+
+  const input = el('input', { class: 'cl-add-input', placeholder: 'Add an item', maxlength: '300', autocomplete: 'off',
+    'aria-label': `New item for ${list.title}`, 'data-focus': `add.${index}` });
+  const add = () => {
+    const text = input.value.trim();
+    if (!text) return;
+    list.items.push({ text, done: false });
+    renderDraftChecklists(`add.${index}`);
+  };
+  noEnterSubmit(input, add);
+  input.addEventListener('paste', (e) => {
+    const lines = pastedLines(e.clipboardData?.getData('text') ?? '');
+    if (!lines) return;
+    e.preventDefault();
+    for (const text of lines) list.items.push({ text, done: false });
+    renderDraftChecklists(`add.${index}`);
+  });
+
+  return el('section', { class: 'cl', 'aria-label': `Checklist ${list.title}` },
+    el('div', { class: 'cl-head' },
+      el('span', { class: 'cl-icon', 'aria-hidden': 'true', text: '☑' }), title,
+      done || list.hideChecked
+        ? el('button', { type: 'button', class: 'btn', text: list.hideChecked ? 'Show checked items' : 'Hide checked items', 'data-focus': `hide.${index}`,
+          onclick: () => { list.hideChecked = !list.hideChecked; renderDraftChecklists(`hide.${index}`); } })
+        : null,
+      el('button', { type: 'button', class: 'btn', text: 'Delete', 'aria-label': `Delete checklist ${list.title}`,
+        onclick: () => {
+          if (total && !confirm(`Delete checklist "${list.title}" and its ${total} item${total === 1 ? '' : 's'}?`)) return;
+          draftChecklists.splice(index, 1);
+          renderDraftChecklists();
+        } })),
+    el('div', { class: 'cl-progress' },
+      el('span', { class: 'cl-pct', text: `${pct}%` }),
+      el('div', { class: `progress${total && done === total ? ' complete' : ''}`, role: 'progressbar', 'aria-label': `${list.title} progress`,
+        'aria-valuemin': '0', 'aria-valuemax': String(total), 'aria-valuenow': String(done) },
+      el('span', { style: `width:${pct}%` }))),
+    rows.some(Boolean) ? el('ul', { class: 'check-list' }, ...rows) : null,
+    el('div', { class: 'cl-add' }, input, el('button', { type: 'button', class: 'btn', text: 'Add', onclick: add })));
+}
+
+function renderDraftChecklists(focusKey = null) {
+  const root = $('dlg-checklists');
+  root.replaceChildren(...draftChecklists.map(draftChecklist));
+  if (focusKey) {
+    const target = root.querySelector(`[data-focus="${focusKey}"]`);
+    target?.focus();
+    if (target?.classList.contains('cl-title')) target.select();
+  }
+}
+
 function fillColumns(boardId, selected) {
   const board = boardById(boardId) ?? store.boards[0];
   $('column').replaceChildren(...board.columns.map((c) => el('option', { value: c.id, text: c.name })));
@@ -546,6 +645,8 @@ function openDialog(task, preset = {}) {
   $('due').value = task?.dueDate ?? '';
   $('tags').value = task ? task.tags.join(', ') : (view.tag ?? '');
   $('notes').value = task?.notes ?? '';
+  draftChecklists = JSON.parse(JSON.stringify(task?.checklists ?? []));
+  renderDraftChecklists();
   $('dialog-error').hidden = true;
   dlg.showModal();
   $('title').focus();
@@ -554,13 +655,23 @@ function openDialog(task, preset = {}) {
 $('board').addEventListener('change', () => fillColumns($('board').value));
 $('create-btn').addEventListener('click', () => openDialog(null));
 $('cancel-btn').addEventListener('click', () => dlg.close());
+$('add-checklist').addEventListener('click', () => {
+  draftChecklists.push({ title: 'Checklist', hideChecked: false, items: [] });
+  renderDraftChecklists(`title.${draftChecklists.length - 1}`);
+});
 dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); });
 
 $('task-form').addEventListener('submit', (e) => {
   e.preventDefault();
+  // text typed in an "Add an item" box but not added yet still counts
+  $('dlg-checklists').querySelectorAll('.cl-add-input').forEach((input, i) => {
+    const text = input.value.trim();
+    if (text && draftChecklists[i]) draftChecklists[i].items.push({ text, done: false });
+  });
   const data = {
     title: $('title').value, boardId: $('board').value, columnId: $('column').value,
     priority: $('priority').value, dueDate: $('due').value, tags: $('tags').value, notes: $('notes').value,
+    checklists: draftChecklists,
   };
   try {
     if (editingId) store.updateTask(editingId, data); else store.addTask(data);
